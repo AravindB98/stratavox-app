@@ -459,8 +459,8 @@ async function getNWS(m,lat,lon){
       const w=(x.windSpeed||'').match(/\d+/g);if(w)m.wind[i]=mean(w.map(Number))*1.609;
       const di=COMP.indexOf(x.windDirection);if(di>=0)m.dir[i]=di*22.5;
       m.cat[i]=textCat(x.shortForecast||'')})}),
-    J(p.observationStations+'?limit=1').then(async d=>{const f=d.features[0];if(!f)return;const o=(await J(`https://api.weather.gov/stations/${f.properties.stationIdentifier}/observations/latest`)).properties;
-      if(o.temperature&&fin(o.temperature.value))S.obs={temp:o.temperature.value,wind:o.windSpeed&&o.windSpeed.value,rh:o.relativeHumidity&&o.relativeHumidity.value,text:o.textDescription,time:Date.parse(o.timestamp),station:f.properties.name.split(',').pop().trim(),id:f.properties.stationIdentifier,by:'US National Weather Service',url:'https://www.weather.gov/wrh/timeseries?site='+f.properties.stationIdentifier}}).catch(()=>{}),
+    J(p.observationStations+'?limit=4').then(async d=>{for(const f of d.features){const id=f.properties.stationIdentifier;let o;try{o=(await J(`https://api.weather.gov/stations/${id}/observations/latest`)).properties}catch(e){continue}
+      if(o.temperature&&fin(o.temperature.value)&&Date.now()-Date.parse(o.timestamp)<80*6e4){S.obs={temp:o.temperature.value,wind:o.windSpeed&&o.windSpeed.value,rh:o.relativeHumidity&&o.relativeHumidity.value,text:o.textDescription,time:Date.parse(o.timestamp),station:f.properties.name.split(',').pop().trim(),id,by:'US National Weather Service',url:'https://www.weather.gov/wrh/timeseries?site='+id};break}}}).catch(()=>{}),
     J(`https://api.weather.gov/alerts/active?point=${(+lat).toFixed(4)},${(+lon).toFixed(4)}`).then(d=>{S.alerts=d.features.map(f=>({...f.properties,by:'US National Weather Service'}))}).catch(()=>{})];
   await Promise.all(tasks);
 }
@@ -468,9 +468,12 @@ async function getNWS(m,lat,lon){
 async function getWWO(m,lat,lon,primP){
   const d=await J(`https://wttr.in/${(+lat).toFixed(3)},${(+lon).toFixed(3)}?format=j1`,9000);await primP;
   const c=d.current_condition&&d.current_condition[0];if(c&&fin(+c.temp_C))S.wwo={temp:+c.temp_C};
-  (d.weather||[]).forEach(day=>day.hourly.forEach(h=>{const i=Math.round((Date.parse(`${day.date}T00:00:00Z`)+(+h.time/100)*HR-S.off*1e3-S.start)/HR);if(i<0||i>=N)return;
+  let pre=null;const NUM={temp:'tempC',app:'FeelsLikeC',rh:'humidity',cloud:'cloudcover',wind:'windspeedKmph',gust:'WindGustKmph',pres:'pressure',pop:'chanceofrain'};
+  (d.weather||[]).forEach(day=>day.hourly.forEach(h=>{const i=Math.round((Date.parse(`${day.date}T00:00:00Z`)+(+h.time/100)*HR-S.off*1e3-S.start)/HR);if(i<0&&i>=-3)pre={i,h};if(i<0||i>=N)return;
     m.temp[i]=+h.tempC;m.app[i]=+h.FeelsLikeC;m.rh[i]=+h.humidity;m.cloud[i]=+h.cloudcover;m.wind[i]=+h.windspeedKmph;m.gust[i]=+h.WindGustKmph;m.dir[i]=+h.winddirDegree;m.pres[i]=+h.pressure;m.pop[i]=+h.chanceofrain;
     for(let k=0;k<3&&i+k<N;k++){m.precip[i+k]=(+h.precipMM||0)/3;m.cat[i+k]=textCat(h.weatherDesc[0].value)}}));
+  if(pre)for(const k in NUM){const f=m[k].findIndex(fin);if(f>0&&f<=3)for(let j=0;j<f;j++)m[k][j]=lerp(+pre.h[NUM[k]],m[k][f],(j-pre.i)/(f-pre.i))}
+  if(pre)for(let j=0;j<3+pre.i;j++){if(!fin(m.precip[j]))m.precip[j]=(+pre.h.precipMM||0)/3;if(!m.cat[j])m.cat[j]=textCat(pre.h.weatherDesc[0].value);if(!fin(m.dir[j]))m.dir[j]=+pre.h.winddirDegree}
   KEYS.filter(k=>k!=='precip').forEach(k=>{let last=-1;for(let i=0;i<N;i++){if(!fin(m[k][i]))continue;if(last>=0&&i-last>1&&i-last<=3)for(let j=last+1;j<i;j++)m[k][j]=k==='dir'?m[k][last]:lerp(m[k][last],m[k][i],(j-last)/(i-last));last=i}});
 }
 async function getDWD(lat,lon){
@@ -591,7 +594,7 @@ function insights(){
   else out.push(['split',`The sources are tightly grouped for the next 3 days, never more than ${dT(Math.max(bs,0.1))} apart.`]);
   if(S.days[1]){const d=S.days[1].hi-S.days[0].hi;if(Math.abs(d)>=2.5)out.push(['trend',`Tomorrow runs ${dT(Math.abs(d))} ${d>0?'warmer':'colder'} than today, with a high of ${fT(S.days[1].hi)}.`])}
   // outlier
-  const devs=ok.map(m=>({m,d:lerp(m.temp[0],m.temp[1],frac())-nowV('temp')})).filter(x=>fin(x.d)).sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
+  const devs=ok.map(m=>({m,v:lerp(m.temp[0],m.temp[1],frac())})).filter(x=>fin(x.v)).map(x=>({m:x.m,d:x.v-nowV('temp')})).sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
   if(devs[0]&&Math.abs(devs[0].d)>=2)out.push(['out',`${devs[0].m.name} is the outlier right now, ${dT(Math.abs(devs[0].d))} ${devs[0].d>0?'above':'below'} the pack.`]);
   let gi=0;for(let i=0;i<24;i++)if((C.gust[i]||0)>(C.gust[gi]||0))gi=i;
   if((C.gust[gi]||0)>=45)out.push(['wind',`Gusts reach ${fW(C.gust[gi])} ${when(gi)}.`]);
