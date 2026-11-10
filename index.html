@@ -218,6 +218,14 @@ footer{color:var(--faint);font-size:12px;padding:18px 0 8px}
 .wave i:nth-child(2){animation-delay:.15s}.wave i:nth-child(3){animation-delay:.3s}.wave i:nth-child(4){animation-delay:.45s}
 @keyframes wv{0%,100%{height:4px}50%{height:16px}}
 .note{font-size:12px;color:var(--muted)}
+.cfg{display:none;padding:10px 16px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--panel);gap:8px;flex-direction:column}
+.cfg.on{display:flex}
+.cfg label{font-size:12px;color:var(--muted);display:grid;gap:4px}
+.cfg select,.cfg input{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%}
+.cfg .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.btn{background:var(--accent);color:#1b1305;border:0;border-radius:8px;padding:8px 14px;font-weight:600}
+.btn.ghost{background:none;color:var(--text);border:1px solid var(--line);font-weight:400}
+.msg.t{color:var(--muted);font-style:italic}
 .err{padding:40px 0;text-align:center;color:var(--muted)}
 
 @media (min-width:1000px){
@@ -326,11 +334,25 @@ footer{color:var(--faint);font-size:12px;padding:18px 0 8px}
 
     <aside class="ask" id="ask" aria-label="Weather assistant">
       <div class="hd">
-        <div><h2>Ask Stratavox</h2><div class="note">Answers come from the live data on this page.</div></div>
+        <div><h2>Ask Stratavox</h2><div class="note" id="brain">Answers come from the live data on this page.</div></div>
         <div style="display:flex;gap:6px">
+          <button class="iconbtn" id="cfgBtn" title="Assistant settings" aria-label="Assistant settings" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.3l2-1.5-2-3.4-2.3.9a7 7 0 0 0-2.2-1.3L14 3h-4l-.4 2.4a7 7 0 0 0-2.2 1.3l-2.3-.9-2 3.4 2 1.5a7 7 0 0 0 0 2.6l-2 1.5 2 3.4 2.3-.9a7 7 0 0 0 2.2 1.3L10 21h4l.4-2.4a7 7 0 0 0 2.2-1.3l2.3.9 2-3.4-2-1.5c.1-.4.1-.9.1-1.3z"/></svg></button>
           <button class="iconbtn" id="voiceOut" aria-pressed="false" title="Speak answers aloud" aria-label="Speak answers aloud"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></button>
           <button class="iconbtn" id="closeAsk" title="Close" aria-label="Close assistant"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
         </div>
+      </div>
+      <div class="cfg" id="cfg">
+        <label>Assistant brain
+          <select id="cfgP">
+            <option value="rules">Built-in engine (no setup, weather questions only)</option>
+            <option value="gemini">Gemini (Google API key, has a free tier)</option>
+            <option value="anthropic">Claude (Anthropic API key)</option>
+            <option value="device" id="optDevice" hidden>On-device Chrome AI (experimental, no key)</option>
+          </select></label>
+        <label id="cfgKeyL">API key<input id="cfgKey" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key"></label>
+        <label id="cfgModelL">Model<input id="cfgModel" type="text" autocomplete="off" spellcheck="false"></label>
+        <div class="row"><button type="button" class="btn" id="cfgSave">Save</button><button type="button" class="btn ghost" id="cfgForget">Remove key</button><span class="note" id="cfgMsg"></span></div>
+        <div class="note">With a language model connected, the assistant understands free-form questions in any language and reasons over the live forecast. Your key is stored only in this browser and is sent only to the provider you choose. Use a key with a spending limit. Get one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> or <a href="https://console.anthropic.com/" target="_blank" rel="noopener">console.anthropic.com</a>.</div>
       </div>
       <div class="log" id="log" aria-live="polite"></div>
       <div class="sugg" id="sugg"></div>
@@ -839,16 +861,73 @@ function answer(q,w){
 }
 const STOP=/^(the|a|an|my|this|that|it|here|there|me|us|morning|afternoon|evening|night|hours?|minutes?|days?|week|weekend|today|tomorrow|tonight|general|case|order|total|sun|rain|snow|shorts|layers)\b/;
 function placeIn(q){const m=q.match(/\b(?:in|for|at|near)\s+([a-z][a-z .'\-]{2,40}?)(?=\s+(?:today|tomorrow|tonight|this|on|next|now|right|at|around|over|during|for)\b|[?.!,]|$)/i);if(!m)return null;const p=m[1].trim();if(STOP.test(p.toLowerCase())||/\b(sun|mon|tues?|wed(nes)?|thu(rs)?|fri|sat(ur)?)(day)?\b/i.test(p))return null;if(S.loc&&p.toLowerCase()===S.loc.name.toLowerCase())return null;return {name:p,rest:q.replace(m[0],' ')}}
+/* ---------- language model layer ---------- */
+const LLM_DEF={gemini:'gemini-3.6-flash',anthropic:'claude-haiku-5-5'};
+const LLM=Object.assign({p:'rules',key:{},model:{}},store.get('llm',{}));
+const LLM_NAME={rules:'built-in engine',gemini:'Gemini',anthropic:'Claude',device:'on-device Chrome AI'};
+const llmOn=()=>LLM.p==='device'?typeof LanguageModel!=='undefined':(LLM.p==='gemini'||LLM.p==='anthropic')&&!!LLM.key[LLM.p];
+let hist=[];
+function llmContext(short){
+  const C=S.C,u=S.units==='F',sun=sunTimes(),row=i=>`${DN[L(epOf(i)).getUTCDay()]} ${hLabel(epOf(i)).replace(' ','')},${Math.round(tv(C.temp[i]))},${Math.round(tv(C.app[i]))},${C.pop[i]},${fP(C.precip[i]).replace(' ','')},${Math.round(wv(C.wind[i]||0))},${Math.round(wv(C.gust[i]||C.wind[i]||0))},${Math.round(C.cloud[i]||0)},${C.cat[i]},${C.conf[i]},${Math.round(tv(C.tmin[i]))}-${Math.round(tv(C.tmax[i]))}`;
+  const last=C.temp.findLastIndex(fin),rows=[];for(let i=0;i<=Math.min(last,short?24:48);i++)rows.push(row(i));if(!short)for(let i=51;i<=last;i+=3)rows.push(row(i));
+  const lt=liveTemp(),ok=S.members.filter(m=>m.ok);
+  return `PLACE: ${S.loc.name}${S.loc.admin?', '+S.loc.admin:''}${S.loc.country?', '+S.loc.country:''} (${(+S.loc.lat).toFixed(2)}, ${(+S.loc.lon).toFixed(2)})
+LOCAL TIME: ${DNF[L(Date.now()).getUTCDay()]} ${hLabel(Date.now(),true)}
+UNITS: temperature ${u?'°F':'°C'}, wind ${wU()}, precipitation ${u?'in':'mm'}
+NOW: ${fT(lt.t)}${lt.obs?` measured at ${S.obs.station} station`:' (blend)'}, feels like ${fT(nowV('app'))}, ${condText(0)}, wind ${fW(nowV('wind'))} from ${compass(nowV('dir')||0)}, gusts ${fW(nowV('gust'))}, humidity ${Math.round(nowV('rh')||0)}%, pressure ${Math.round(nowV('pres')||0)} hPa, UV ${(C.uv[0]||0).toFixed(0)}${S.aqi&&fin(S.aqi.us_aqi)?`, US AQI ${Math.round(S.aqi.us_aqi)} (${aqiWord(S.aqi.us_aqi)}), PM2.5 ${S.aqi.pm2_5}`:''}
+${sun?`SUN TODAY: rise ${hLabel(sun.rise,true)}, set ${hLabel(sun.set,true)}`:''}
+DAILY (day,sky,high,low,max rain chance %,precip total,precip range across sources,max wind,agreement %):
+${S.days.map(d=>`${d.name},${d.cat},${Math.round(tv(d.hi))},${Math.round(tv(d.lo))},${d.pop},${fP(d.precip)},${fP(d.pLo)} to ${fP(d.pHi)},${Math.round(wv(d.wind))},${d.conf}`).join('\n')}
+HOURLY (time,temp,feels,rain chance %,precip,wind,gust,cloud %,sky,agreement %,temp range across sources):
+${rows.join('\n')}
+SOURCES RIGHT NOW (${ok.length} forecast sources): ${ok.map(m=>{const v=lerp(m.temp[0],m.temp[1],frac());return m.name+(fin(v)?' '+fT(v):'')}).join('; ')}
+OFFICIAL ALERTS: ${S.alerts.length?S.alerts.map(a=>(a.headline||a.event)).join(' | '):'none (official feeds cover US and Germany only)'}
+COMPUTED ADVISORIES: ${advisories().map(a=>a[0]+': '+a[1]).join(' | ')||'none'}`;
+}
+const LLM_SYS=`You are Stratavox, the assistant inside a weather app that blends many forecast sources into one consensus. Answer the user's question from the DATA block, which is live for the place shown.
+Rules:
+- Be conversational and specific: name times, numbers and units from the data. Usually 1 to 4 sentences. Plain text only, no markdown, lists or emoji, because answers may be read aloud.
+- For advice (clothing, sport, travel, events, farming, laundry, health, photography, anything practical) reason from the data and give a clear recommendation.
+- "agreement %" is how closely the sources agree. When it is under 60, or the source ranges are wide, say the forecast is uncertain.
+- If the question is about a different place than PLACE, reply with exactly one line and nothing else: PLACE: <city, country>
+- The data covers the next 7 days only. If asked beyond that or about past weather, say so. Never invent numbers.
+- General weather or climate questions that need no data: answer briefly from general knowledge.
+- For anything unrelated to weather or planning around it, decline in one sentence.
+- You are not an official warning service.
+- Reply in the language the user wrote in.`;
+async function llmCall(q){
+  const sys=LLM_SYS+'\n\nDATA\n'+llmContext(LLM.p==='device'),msgs=[...hist.slice(-6),{role:'user',content:q}],model=LLM.model[LLM.p]||LLM_DEF[LLM.p];
+  const post=async(url,headers,body)=>{const c=new AbortController(),t=setTimeout(()=>c.abort(),30000);try{const r=await fetch(url,{method:'POST',signal:c.signal,headers:{'content-type':'application/json',...headers},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok){const e=new Error((d.error&&d.error.message)||('HTTP '+r.status));e.status=r.status;throw e}return d}finally{clearTimeout(t)}};
+  if(LLM.p==='anthropic'){const d=await post('https://api.anthropic.com/v1/messages',{'x-api-key':LLM.key.anthropic,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},{model,max_tokens:500,system:sys,messages:msgs});return (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim()}
+  if(LLM.p==='gemini'){const d=await post(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,{'x-goog-api-key':LLM.key.gemini},{system_instruction:{parts:[{text:sys}]},contents:msgs.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]})),generationConfig:{maxOutputTokens:700,temperature:0.4}});
+    const t=((d.candidates||[])[0]||{}).content;return ((t&&t.parts)||[]).map(p=>p.text||'').join('').trim()}
+  if(LLM.p==='device'){const ses=await LanguageModel.create({initialPrompts:[{role:'system',content:sys}]});try{return (await ses.prompt(q)).trim()}finally{ses.destroy&&ses.destroy()}}
+  throw new Error('No language model selected');
+}
+function llmWhy(e){return e.status===401||e.status===403?'the API key was rejected':e.status===429?'the provider rate limit was reached':e.status===404?'the model name was not found':e.name==='AbortError'?'the model took too long':'the model could not be reached ('+(e.message||'network error').slice(0,80)+')'}
+function rulesAnswer(q){try{return answer(q,parseWindow(q))}catch(e){return 'I could not work that one out. Try asking about rain, temperature, wind, what to wear, or the best time for something.'}}
+async function switchPlace(name){let hit=[];try{hit=await geocode(name)}catch(e){try{hit=await geocode(name)}catch(x){}}if(!hit[0])return 'notfound';const t=say('a','Switching to '+hit[0].name+' and polling every source.');t.classList.add('t');const ok=await load(hit[0]);t.remove();return ok?hit[0]:ok===null?'superseded':'failed'}
 async function ask(text,viaVoice){
   text=text.trim();if(!text)return;openAsk();say('u',text);
-  if(!S.C&&!S.loadId){say('a','Still loading. Try again in a moment.');return}
-  let q=text.toLowerCase().replace(/[’']/g,"'"),note='';
-  const pl=placeIn(text);
-  if(pl){const hit=await geocode(pl.name).catch(()=>[]);if(hit[0]){const typing=say('a','Switching to '+hit[0].name+' and polling every source.');const ok=await load(hit[0]);typing.remove();if(ok===null)return;if(!ok){say('a','I could not load forecasts for '+hit[0].name+'.');return}q=pl.rest.toLowerCase();note=`In ${hit[0].name}${hit[0].country?', '+hit[0].country:''}: `}}
-  if(!S.C){say('a','The forecast has not loaded yet. Check the connection and search the place again.');return}
-  let out;try{out=answer(q,parseWindow(q))}catch(e){out='I could not work that one out. Try asking about rain, temperature, wind, what to wear, or the best time for something.'}
-  out=note+out;const ok=S.members.filter(m=>m.ok);
-  say('a',out,`Sources: ${ok.map(m=>m.name).join(' · ')}${S.obs?' · '+S.obs.id+' station':''}`);
+  if(!S.C){say('a','The forecast is still loading. Try again in a moment.');return}
+  let out,by='',note='';
+  if(llmOn()){
+    const t=say('a','Thinking');t.classList.add('t');
+    try{out=await llmCall(text);
+      const pm=out.match(/^\s*PLACE:\s*(.+)$/im);
+      if(pm){const pl=await switchPlace(pm[1].split(',')[0].trim());if(pl==='superseded'){t.remove();return}out=typeof pl==='object'?await llmCall(text):'I could not find forecasts for '+pm[1].trim()+'. Check the spelling or search for it in the box at the top.'}
+      if(!out)throw new Error('empty reply');by=' · answered by '+LLM_NAME[LLM.p];hist.push({role:'user',content:text},{role:'assistant',content:out});
+    }catch(e){out=null;note=`(Using the built-in engine because ${llmWhy(e)}.) `}
+    t.remove();
+  }
+  if(out==null){
+    let q=text.toLowerCase().replace(/[’']/g,"'");const pl=placeIn(text);
+    if(pl){const hit=await switchPlace(pl.name);if(hit==='superseded')return;if(hit==='failed'){say('a','I could not load forecasts for '+pl.name+'.');return}if(typeof hit==='object'){q=pl.rest.toLowerCase();note+=`In ${hit.name}${hit.country?', '+hit.country:''}: `}}
+    if(!S.C){say('a','The forecast has not loaded yet. Check the connection and search the place again.');return}
+    out=note+rulesAnswer(q);
+  }
+  const ok=S.members.filter(m=>m.ok);
+  say('a',out,`Sources: ${ok.map(m=>m.name).join(' · ')}${S.obs?' · '+S.obs.id+' station':''}${by}`);
   if(viaVoice||S.voiceOut)speak(out);
 }
 function say(who,text,cite){const d=document.createElement('div');d.className='msg '+who;d.textContent=text;if(cite){const c=document.createElement('a');c.className='cite';c.href='#sources';c.textContent=cite;d.appendChild(c)}const l=$('#log');l.appendChild(d);l.scrollTop=l.scrollHeight;return d}
@@ -892,10 +971,20 @@ $('#mic').addEventListener('click',toggleMic);
 $('#closeAsk').addEventListener('click',()=>$('#ask').classList.remove('open'));
 $('#voiceOut').addEventListener('click',e=>{S.voiceOut=!S.voiceOut;e.currentTarget.setAttribute('aria-pressed',S.voiceOut);if(!S.voiceOut)try{speechSynthesis.cancel()}catch(x){}});
 $('#readBrief').addEventListener('click',()=>{if(S.C)speak(`Here is the brief for ${S.loc.name}. It is ${fT(liveTemp().t)} and ${condText(0).toLowerCase()}. `+insights().map(x=>x[1]).join(' '))});
+function cfgPaint(){const p=$('#cfgP').value,needKey=p==='gemini'||p==='anthropic';$('#cfgKeyL').style.display=needKey?'':'none';$('#cfgModelL').style.display=needKey?'':'none';$('#cfgForget').style.display=needKey?'':'none';
+  if(needKey){$('#cfgKey').value='';$('#cfgKey').placeholder=LLM.key[p]?'Key saved. Paste a new one to replace it.':'Paste your key';$('#cfgModel').value=LLM.model[p]||LLM_DEF[p]}
+  $('#brain').textContent=llmOn()?`Free-form questions answered by ${LLM_NAME[LLM.p]}, grounded in the live data.`:'Answers come from the live data on this page.'}
+$('#cfgP').value=LLM.p;cfgPaint();
+if(typeof LanguageModel!=='undefined')LanguageModel.availability().then(a=>{if(a!=='unavailable'){$('#optDevice').hidden=false;$('#cfgP').value=LLM.p}}).catch(()=>{});
+$('#cfgBtn').addEventListener('click',e=>{openAsk();const on=$('#cfg').classList.toggle('on');e.currentTarget.setAttribute('aria-expanded',on)});
+$('#cfgP').addEventListener('change',cfgPaint);
+$('#cfgSave').addEventListener('click',()=>{const p=$('#cfgP').value,k=$('#cfgKey').value.trim();LLM.p=p;if(k)LLM.key[p]=k;if(p==='gemini'||p==='anthropic')LLM.model[p]=$('#cfgModel').value.trim()||LLM_DEF[p];store.set('llm',LLM);hist=[];cfgPaint();
+  $('#cfgMsg').textContent=(p==='gemini'||p==='anthropic')&&!LLM.key[p]?'Add a key to turn this on.':'Saved. Ask a question to try it.'});
+$('#cfgForget').addEventListener('click',()=>{const p=$('#cfgP').value;delete LLM.key[p];store.set('llm',LLM);cfgPaint();$('#cfgMsg').textContent='Key removed from this browser.'});
 const SUGG=['Do I need an umbrella today?','What should I wear tomorrow?','Best time for a run this weekend?','Which sources disagree?','Weather in Chennai','How does the week look?'];
 $('#sugg').innerHTML=SUGG.map(s=>`<button type="button">${s}</button>`).join('');
 $('#sugg').addEventListener('click',e=>{if(e.target.tagName==='BUTTON')ask(e.target.textContent)});
-say('a','Hi, I am Stratavox. Ask by typing or tap the mic. I answer from the blended forecast on this page and tell you how much the sources agree.');
+say('a','Hi, I am Stratavox. Ask by typing or tap the mic. I answer from the blended forecast on this page and tell you how much the sources agree. Tap the gear to connect a language model for free-form questions in any language.');
 S.units=store.get('units',/^en-(US|LR|MM)/i.test(navigator.language||'')?'F':'C');$('#uC').setAttribute('aria-pressed',S.units==='C');$('#uF').setAttribute('aria-pressed',S.units==='F');
 sky.start();
 (async()=>{let loc=store.get('loc',null);
